@@ -1,0 +1,23 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# VS Code
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build outputs
+*.o
+*.elf
+*.bin
+*.hex
