@@ -1,9 +1,10 @@
 #include <Arduino.h>
-#include "StateMachine.h"
+#include "control/StateMachine.h"
 
 void setup() {
   Serial.begin(115200);
   delay(200);
+
   stateMachineSetup();
 }
 

@@ -968,7 +968,7 @@ class ControlWindow(QWidget):
                SENSOR CARDS
             ════════════════════════════════════════════════════════════════ */
             QFrame#SensorCard {{
-                background: {C['elevated']};
+                bacskground: {C['elevated']};
                 border: 1px solid {C['border']};
                 border-radius: 6px;
                 min-height: 60px;
