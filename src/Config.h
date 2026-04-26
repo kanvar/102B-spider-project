@@ -39,4 +39,7 @@ constexpr unsigned long SENSOR_INTERVAL_MS = 100;
 constexpr unsigned long GAIT_STEP_MS       = 600;
 constexpr unsigned long IDLE_PRINT_MS      = 1000;
 
+// Fire sensor pin
+constexpr int FIRE_SENSOR_PIN = 35;   // change if needed
+
 #endif

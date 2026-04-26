@@ -4,6 +4,7 @@
 #include "../motion/LegController.h"
 #include "../sensors/DistanceSensor.h"
 #include "../Config.h"
+#include "../sensors/FireSensor.h"
 
 // Later, when connected:
 // #include "../actuators/DrillMotor.h"
@@ -30,6 +31,27 @@ void stateMachineSetup() {
 void stateMachineLoop() {
   // Event checker: GUI commands
   checkSerialCommand();
+
+void stateMachineLoop() {
+  // Event checker: GUI commands
+  checkSerialCommand();
+
+  // Event checker: fire sensor always runs
+  checkFireSensor();
+
+  if (isFireDetected()) {
+    if (currentState != ABORT) {
+      currentState = ABORT;
+      Serial.println("STATE_ACK:ABORT");
+      Serial.println("ALERT:FIRE_DETECTED");
+    }
+  }
+
+  // Event checker: ultrasonic sensor
+  checkDistanceSensor();
+
+  // State services
+  switch (currentState) {
 
   // Event checker: ultrasonic sensor
   checkDistanceSensor();
