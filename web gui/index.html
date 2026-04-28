@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ME 102B · Seeder Robot Control</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Barlow+Condensed:wght@300;400;500;600;700&display=swap"
+    rel="stylesheet"
+  />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body>
+  <!-- ABORT OVERLAY -->
+  <div id="abort-overlay" class="hidden">
+    <div class="overlay-content">
+      <div class="overlay-icon">⬛</div>
+      <div class="overlay-title">SAFETY ACTIVE</div>
+      <div class="overlay-sub">ROBOT RETURNING HOME / ACTUATORS STOPPED</div>
+      <button onclick="clearAbort()" class="overlay-clear-btn">
+        CLEAR &amp; RETURN TO IDLE
+      </button>
+    </div>
+  </div>
+
+  <!-- HEADER -->
+  <header class="site-header">
+    <div class="header-left">
+      <div class="logo-wrap">
+        <img src="assets/logo.png" alt="Spider Robot Logo" class="logo-img" />
+      </div>
+
+      <div class="header-titles">
+        <div class="header-sub">UC BERKELEY · ME 102B</div>
+        <div class="header-main">SEEDER CONTROL SYSTEM</div>
+      </div>
+    </div>
+
+    <div class="header-center">
+      <div class="mode-toggle" role="tablist">
+        <button id="seederBtn" class="mode-tab active" type="button">
+          SEEDER SYSTEM
+        </button>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <div id="connectionStatus" class="status-pill pill-offline">
+        <span class="pill-dot"></span>
+        <span>WAITING</span>
+      </div>
+
+      <button id="abortBtn" class="abort-btn" type="button" title="Emergency stop [Esc]">
+        <span class="abort-icon">⬛</span> ABORT
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN CONTENT -->
+  <main id="main-content">
+    <div class="dashboard-grid">
+
+      <!-- LEFT COLUMN -->
+      <div class="col col-left">
+
+        <!-- STATE CARD -->
+        <div class="card" id="state-card">
+          <div class="card-header">
+            <span class="card-label">SEEDER STATE</span>
+            <span class="card-hint">STATE MACHINE</span>
+          </div>
+
+          <div class="state-btn-group">
+            <button class="state-btn" data-state="IDLE" type="button">
+              <span class="sb-dot"></span>IDLE
+            </button>
+
+            <button class="state-btn" data-state="DRILLING" type="button">
+              <span class="sb-dot"></span>DRILLING
+            </button>
+
+            <button class="state-btn" data-state="SEEDING" type="button">
+              <span class="sb-dot"></span>SEEDING
+            </button>
+
+            <button class="state-btn" data-state="COVERING" type="button">
+              <span class="sb-dot"></span>COVERING
+            </button>
+
+            <button class="state-btn" data-state="RETURN_HOME" type="button">
+              <span class="sb-dot"></span>RETURN_HOME
+            </button>
+          </div>
+        </div>
+
+        <!-- SEQUENCE CARD -->
+        <section id="seederInterface" class="card">
+          <div class="card-header">
+            <span class="card-label">PLANTING SEQUENCE</span>
+            <span class="card-hint">RUN STEPS IN ORDER</span>
+          </div>
+
+          <div class="sequence-list compact-sequence">
+            <button class="seq-btn full-width" data-sequence="START_PLANTING_SEQUENCE" type="button">
+              01 · Start Planting Sequence
+            </button>
+
+            <button class="seq-btn full-width" data-sequence="CHECK_HEIGHT" type="button">
+              02 · Check Ultrasonic Height
+            </button>
+
+            <button class="seq-btn full-width" data-sequence="BEGIN_DRILLING" type="button">
+              03 · Begin Drilling
+            </button>
+
+            <button class="seq-btn full-width" data-sequence="DRILL_COMPLETE" type="button">
+              04 · Drilling Complete
+            </button>
+
+            <button class="seq-btn full-width" data-sequence="DROP_SEED" type="button">
+              05 · Drop Seed
+            </button>
+
+            <button class="seq-btn full-width" data-sequence="MOVE_SIDEWAYS" type="button">
+              06 · Move Sideways
+            </button>
+
+            <button class="seq-btn full-width" data-sequence="COVER_SEED" type="button">
+              07 · Cover Seed
+            </button>
+
+            <button class="seq-btn seq-btn-end full-width" data-sequence="RETURN_HOME" type="button">
+              08 · Return Home
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <!-- CENTER COLUMN -->
+      <div class="col col-center">
+
+        <!-- CURRENT STATE BADGE -->
+        <div class="card state-badge-card" id="badge-card">
+          <div class="badge-label">CURRENT STATE</div>
+          <div class="badge-value" id="currentState">IDLE</div>
+          <div class="badge-sub" id="badge-desc">
+            Power on · Zero servos · Zero ultrasonic
+          </div>
+        </div>
+
+        <!-- LIVE TELEMETRY -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-label">LIVE TELEMETRY</span>
+            <span class="card-hint" id="telem-age">WAITING</span>
+          </div>
+
+          <div class="telem-grid">
+            <div class="telem-card">
+              <div class="tc-title">ULTRASONIC HEIGHT</div>
+              <div class="tc-value" id="distanceValue">-- cm</div>
+            </div>
+
+            <div class="telem-card">
+              <div class="tc-title">DRILL</div>
+              <div class="tc-value" id="drillValue">OFF</div>
+            </div>
+
+            <div class="telem-card">
+              <div class="tc-title">SEEDER</div>
+              <div class="tc-value" id="seederValue">IDLE</div>
+            </div>
+
+            <div class="telem-card">
+              <div class="tc-title">COVERING LEG</div>
+              <div class="tc-value small" id="coverValue">READY</div>
+            </div>
+
+            <div class="telem-card tc-wide">
+              <div class="tc-title">FIRE SENSOR</div>
+              <div class="tc-value" id="fireValue">
+                <span class="fire-safe">● SAFE</span>
+              </div>
+            </div>
+
+            <div class="telem-card tc-wide">
+              <div class="tc-title">SAFETY MONITOR</div>
+              <div class="tc-value small" id="safetyValue">ACTIVE</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- COMMUNICATION MAP -->
+        <div class="card">
+          <div class="card-header">
+            <span class="card-label">COMMUNICATION FLOW</span>
+            <span class="card-hint">GUI → ESP32 → MODULES</span>
+          </div>
+
+          <div class="system-map">
+            <div class="map-item">
+              <span class="map-title">GUI</span>
+              <span class="map-desc">Sends high-level commands</span>
+            </div>
+
+            <div class="map-item">
+              <span class="map-title">SerialCommand</span>
+              <span class="map-desc">Parses command strings</span>
+            </div>
+
+            <div class="map-item">
+              <span class="map-title">StateMachine</span>
+              <span class="map-desc">Controls IDLE / DRILLING / SEEDING / COVERING</span>
+            </div>
+
+            <div class="map-item">
+              <span class="map-title">Safety Monitor</span>
+              <span class="map-desc">Always checks flame and height errors</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT COLUMN -->
+      <div class="col col-right">
+        <div class="card log-card">
+          <div class="card-header">
+            <span class="card-label">COMMAND LOG</span>
+            <button class="clear-log-btn" onclick="clearLog()" type="button">CLEAR</button>
+          </div>
+
+          <div class="log-area" id="logBox"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- STATUS BAR -->
+  <footer class="status-bar">
+    <div class="sb-item">
+      <span class="sb-key">MODE</span>
+      <span class="sb-val" id="modeFooter">SEEDER SYSTEM</span>
+    </div>
+
+    <div class="sb-item">
+      <span class="sb-key">LAST CMD</span>
+      <span class="sb-val" id="lastCommand">--</span>
+    </div>
+
+    <div class="sb-item">
+      <span class="sb-key">ESP32</span>
+      <span class="sb-val" id="wifiValue">WAITING</span>
+    </div>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
