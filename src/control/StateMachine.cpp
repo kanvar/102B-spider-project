@@ -1,10 +1,12 @@
 #include <Arduino.h>
 #include "StateMachine.h"
 #include "SerialCommand.h"
+#include "WiFiCommand.h"
+
 #include "../motion/LegController.h"
 #include "../sensors/DistanceSensor.h"
-#include "../Config.h"
 #include "../sensors/FireSensor.h"
+#include "../Config.h"
 
 // Later, when connected:
 // #include "../actuators/DrillMotor.h"
@@ -14,46 +16,50 @@ State currentState = IDLE;
 
 static bool drillStarted = false;
 static bool seederStarted = false;
+static bool coveringStarted = false;
+static bool returningHome = false;
 
-void checkDistanceSensor();
+static unsigned long lastStatusPrint = 0;
+
+// =====================================================
+// SETUP
+// =====================================================
 
 void stateMachineSetup() {
   legSetup();
   distanceSensorSetup();
+  fireSensorSetup();
+
+  wifiCommandSetup();
 
   currentState = IDLE;
+
   drillStarted = false;
   seederStarted = false;
+  coveringStarted = false;
+  returningHome = false;
 
+  Serial.println("SYSTEM_READY");
+  Serial.println("STATE_ACK:IDLE");
   Serial.println("State machine initialized. State: IDLE");
+  Serial.println("Safety monitor initialized.");
 }
 
-void stateMachineLoop() {
-  // Event checker: GUI commands
-  checkSerialCommand();
+// =====================================================
+// MAIN LOOP
+// =====================================================
 
 void stateMachineLoop() {
-  // Event checker: GUI commands
+  // USB serial command listener
   checkSerialCommand();
 
-  // Event checker: fire sensor always runs
-  checkFireSensor();
+  // WiFi command listener
+  wifiCommandLoop();
 
-  if (isFireDetected()) {
-    if (currentState != ABORT) {
-      currentState = ABORT;
-      Serial.println("STATE_ACK:ABORT");
-      Serial.println("ALERT:FIRE_DETECTED");
-    }
-  }
+  // Safety monitor must always run, even during ABORT
+  checkSafetyMonitor();
 
-  // Event checker: ultrasonic sensor
-  checkDistanceSensor();
-
-  // State services
-  switch (currentState) {
-
-  // Event checker: ultrasonic sensor
+  // Distance sensor is mainly used during DRILLING
   checkDistanceSensor();
 
   // State services
@@ -62,16 +68,20 @@ void stateMachineLoop() {
       serviceIdle();
       break;
 
-    case WALKING:
-      serviceWalking();
+    case DRILLING:
+      serviceDrilling();
       break;
 
-    case PRE_PLANTING:
-      servicePrePlanting();
+    case SEEDING:
+      serviceSeeding();
       break;
 
-    case PLANTING:
-      servicePlanting();
+    case COVERING:
+      serviceCovering();
+      break;
+
+    case RETURN_HOME:
+      serviceReturnHome();
       break;
 
     case ABORT:
@@ -80,10 +90,81 @@ void stateMachineLoop() {
   }
 }
 
-// ========== EVENT CHECKER: ULTRASONIC SENSOR ==========
-// New logic:
-// The ultrasonic sensor does NOT decide walking anymore.
-// It only decides whether the robot is close enough to drill during PRE_PLANTING.
+// =====================================================
+// STATE CHANGE HELPER
+// =====================================================
+
+void setRobotState(State newState) {
+  if (currentState == newState) return;
+
+  State previousState = currentState;
+  currentState = newState;
+
+  Serial.print("STATE_CHANGE:");
+  Serial.print(stateToString(previousState));
+  Serial.print("->");
+  Serial.println(stateToString(currentState));
+
+  Serial.print("STATE_ACK:");
+  Serial.println(stateToString(currentState));
+
+  // Reset one-time action flags when entering a new state
+  if (newState == IDLE) {
+    drillStarted = false;
+    seederStarted = false;
+    coveringStarted = false;
+    returningHome = false;
+  }
+
+  if (newState == DRILLING) {
+    drillStarted = false;
+  }
+
+  if (newState == SEEDING) {
+    seederStarted = false;
+  }
+
+  if (newState == COVERING) {
+    coveringStarted = false;
+  }
+
+  if (newState == RETURN_HOME) {
+    returningHome = false;
+  }
+
+  if (newState == ABORT) {
+    drillStarted = false;
+    seederStarted = false;
+    coveringStarted = false;
+    returningHome = false;
+  }
+}
+
+// =====================================================
+// ALWAYS-ON SAFETY MONITOR
+// =====================================================
+
+void checkSafetyMonitor() {
+  checkFireSensor();
+
+  if (isFireDetected()) {
+    if (currentState != ABORT) {
+      Serial.println("ALERT:FIRE_DETECTED");
+      setRobotState(ABORT);
+    }
+  }
+
+  // Later add other safety checks here:
+  // - jam detection
+  // - invalid ultrasonic values
+  // - unexpected position
+  // - lost communication
+}
+
+// =====================================================
+// DISTANCE SENSOR CHECK
+// =====================================================
+
 void checkDistanceSensor() {
   float distance = readDistanceIfReady();
 
@@ -92,7 +173,8 @@ void checkDistanceSensor() {
   Serial.print("DISTANCE:");
   Serial.println(distance);
 
-  if (currentState != PRE_PLANTING) return;
+  // Distance only controls drill permission during DRILLING
+  if (currentState != DRILLING) return;
 
   if (isCloseEnoughToDrill(distance)) {
     if (!drillStarted) {
@@ -124,45 +206,50 @@ void checkDistanceSensor() {
   }
 }
 
-// ========== STATE SERVICES ==========
+// =====================================================
+// STATE SERVICES
+// =====================================================
 
 void serviceIdle() {
-  // Robot waiting.
-  // Motors should be off.
+  // IDLE:
+  // - Robot waiting
+  // - Motors off
+  // - Servos at home/zero position if needed
+
   drillStarted = false;
   seederStarted = false;
+  coveringStarted = false;
+  returningHome = false;
 
   // Later add:
   // drillMotor.off();
   // seederMotor.release();
+  // resetGait();
+
+  if (millis() - lastStatusPrint > 1000) {
+    lastStatusPrint = millis();
+    Serial.println("STATUS:IDLE");
+  }
 }
 
-void serviceWalking() {
-  // Walking state:
-  // Only leg servos should move.
-  // Drill and seeder should be off.
-  drillStarted = false;
-  seederStarted = false;
+void serviceDrilling() {
+  // DRILLING:
+  // - Ultrasonic sensor checks height
+  // - Drill turns on only when height is correct
+  // - Drill complete is triggered by GUI command:
+  //   SEQUENCE:DRILL_COMPLETE
 
-  serviceWalkingGait();
-
-  // Later add:
-  // drillMotor.off();
-  // seederMotor.release();
+  if (millis() - lastStatusPrint > 1000) {
+    lastStatusPrint = millis();
+    Serial.println("STATUS:DRILLING");
+  }
 }
 
-void servicePrePlanting() {
-  // Pre-planting state:
-  // Robot checks ultrasonic distance.
-  // Drill turns on only when distance <= PLANT_THRESHOLD_CM.
-  // Actual drill activation is handled in checkDistanceSensor().
-}
-
-void servicePlanting() {
-  // Planting state:
-  // Drill should stop.
-  // Seeder should activate once.
-  // Then robot returns to WALKING.
+void serviceSeeding() {
+  // SEEDING:
+  // - Drill should be off
+  // - Seeder stepper drops one seed
+  // - Robot may move sideways after seed drop
 
   if (!seederStarted) {
     seederStarted = true;
@@ -175,39 +262,109 @@ void servicePlanting() {
     Serial.println("DRILL_ACK:OFF_REQUESTED");
     Serial.println("SEEDER_ACK:ON_REQUESTED");
     Serial.println("SEEDER_DONE");
+  }
 
-    currentState = WALKING;
-    resetGait();
+  if (millis() - lastStatusPrint > 1000) {
+    lastStatusPrint = millis();
+    Serial.println("STATUS:SEEDING");
+  }
+}
 
-    Serial.println("STATE_ACK:WALKING");
+void serviceCovering() {
+  // COVERING:
+  // - Middle/side leg covers seed
+  // - Can repeat covering motion
+  // - Eventually returns home
+
+  if (!coveringStarted) {
+    coveringStarted = true;
+
+    // Later add:
+    // coverSeedWithMiddleLeg();
+
+    Serial.println("COVERING_ACK:STARTED");
+  }
+
+  if (millis() - lastStatusPrint > 1000) {
+    lastStatusPrint = millis();
+    Serial.println("STATUS:COVERING");
+  }
+}
+
+void serviceReturnHome() {
+  // RETURN_HOME:
+  // - Stop drill
+  // - Stop/release seeder
+  // - Return servos/legs to home position
+  // - Then return to IDLE when complete
+
+  if (!returningHome) {
+    returningHome = true;
+
+    drillStarted = false;
+    seederStarted = false;
+    coveringStarted = false;
+
+    // Later add:
+    // drillMotor.off();
+    // seederMotor.release();
+    // returnLegsHome();
+
+    Serial.println("RETURN_HOME_ACK:STARTED");
+  }
+
+  if (millis() - lastStatusPrint > 1000) {
+    lastStatusPrint = millis();
+    Serial.println("STATUS:RETURN_HOME");
   }
 }
 
 void serviceAbort() {
-  // Abort state:
-  // Everything must stop and stay stopped until GUI sends STATE:IDLE.
+  // ABORT:
+  // - Stop everything immediately
+  // - Stay here until GUI sends STATE:IDLE
+  // - Fire sensor still keeps monitoring
+
   drillStarted = false;
   seederStarted = false;
-
-  resetGait();
+  coveringStarted = false;
+  returningHome = false;
 
   // Later add:
   // drillMotor.off();
   // seederMotor.release();
+  // resetGait();
+
+  if (millis() - lastStatusPrint > 1000) {
+    lastStatusPrint = millis();
+    Serial.println("STATUS:ABORT");
+  }
 }
+
+// =====================================================
+// STATE NAME HELPER
+// =====================================================
 
 const char* stateToString(State state) {
   switch (state) {
     case IDLE:
       return "IDLE";
-    case WALKING:
-      return "WALKING";
-    case PRE_PLANTING:
-      return "PRE_PLANTING";
-    case PLANTING:
-      return "PLANTING";
+
+    case DRILLING:
+      return "DRILLING";
+
+    case SEEDING:
+      return "SEEDING";
+
+    case COVERING:
+      return "COVERING";
+
+    case RETURN_HOME:
+      return "RETURN_HOME";
+
     case ABORT:
       return "ABORT";
+
     default:
       return "UNKNOWN";
   }

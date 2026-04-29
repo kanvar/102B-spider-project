@@ -1,7 +1,6 @@
 #pragma once
 
-// Reads incoming commands from GUI over serial
-void checkSerialCommand();
+#include <Arduino.h>
 
-// Handles one command string from the GUI
+void checkSerialCommand();
 void handleSerialCommand(String cmd);
