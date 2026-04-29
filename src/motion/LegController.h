@@ -3,7 +3,7 @@
 void legSetup();
 
 // Services
-void serviceIdle();
+void serviceLegIdle();
 void serviceWalking();
 void servicePlanting();
 

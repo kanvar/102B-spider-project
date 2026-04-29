@@ -1,13 +1,7 @@
 #include <Arduino.h>
 #include "SerialCommand.h"
 #include "StateMachine.h"
-#include "../motion/LegController.h"
 
-// Later, when these are fully connected, we can include:
-// #include "../actuators/DrillMotor.h"
-// #include "../actuators/SeederMotor.h"
-
-// ========== EVENT CHECKER: GUI serial commands ==========
 void checkSerialCommand() {
   if (!Serial.available()) return;
 
@@ -19,137 +13,127 @@ void checkSerialCommand() {
   handleSerialCommand(cmd);
 }
 
-// ========== COMMAND HANDLER ==========
 void handleSerialCommand(String cmd) {
   Serial.print("RX:");
   Serial.println(cmd);
 
-  // ---------- ABORT / EMERGENCY STOP ----------
   if (cmd == "ABORT" || cmd == "STATE:ABORT") {
-    currentState = ABORT;
-
-    // Stop all motion/actuators here
-    resetGait();
-
-    // Later add:
-    // drillMotor.off();
-    // seederMotor.release();
-
-    Serial.println("STATE_ACK:ABORT");
+    setRobotState(ABORT);
     Serial.println("ALERT:ABORT_TRIGGERED");
     return;
   }
 
-  // ---------- STATE COMMANDS ----------
+  if (cmd == "SAFETY:FIRE_DETECTED") {
+    Serial.println("ALERT:FIRE_DETECTED");
+    setRobotState(ABORT);
+    return;
+  }
+
+  if (cmd == "SAFETY:JAM_DETECTED") {
+    Serial.println("ALERT:JAM_DETECTED");
+    setRobotState(RETURN_HOME);
+    return;
+  }
+
   if (cmd == "STATE:IDLE") {
-    currentState = IDLE;
-
-    resetGait();
-
-    // Later add:
-    // drillMotor.off();
-    // seederMotor.release();
-
-    Serial.println("STATE_ACK:IDLE");
+    setRobotState(IDLE);
+    return;
   }
 
-  else if (cmd == "STATE:WALKING") {
-    currentState = WALKING;
-
-    resetGait();
-
-    Serial.println("STATE_ACK:WALKING");
+  if (cmd == "STATE:DRILLING") {
+    setRobotState(DRILLING);
+    return;
   }
 
-  else if (cmd == "STATE:PRE_PLANTING") {
-    currentState = PRE_PLANTING;
-
-    // In this state, ultrasonic sensor decides when the drill can turn on.
-    // The drill should NOT automatically turn on from GUI alone here.
-    // StateMachine will check distance and then activate drill.
-
-    Serial.println("STATE_ACK:PRE_PLANTING");
+  if (cmd == "STATE:SEEDING") {
+    setRobotState(SEEDING);
+    return;
   }
 
-  else if (cmd == "STATE:PLANTING") {
-    currentState = PLANTING;
-
-    // In this state, drill should stop and seeder should activate.
-    // Later add:
-    // drillMotor.off();
-    // seederMotor.rotateOneRevolution();
-
-    Serial.println("STATE_ACK:PLANTING");
+  if (cmd == "STATE:COVERING") {
+    setRobotState(COVERING);
+    return;
   }
 
-  // ---------- MOVEMENT COMMANDS ----------
-  else if (cmd == "MOVE:FORWARD") {
-    currentState = WALKING;
-    resetGait();
-
-    Serial.println("MOVE_ACK:FORWARD");
+  if (cmd == "STATE:RETURN_HOME") {
+    setRobotState(RETURN_HOME);
+    return;
   }
 
-  else if (cmd == "MOVE:BACKWARD") {
-    currentState = WALKING;
-    resetGait();
-
-    Serial.println("MOVE_ACK:BACKWARD");
+  if (cmd == "SEQUENCE:START_PLANTING_SEQUENCE") {
+    Serial.println("ACK:START_PLANTING_SEQUENCE");
+    setRobotState(DRILLING);
+    return;
   }
 
-  else if (cmd == "MOVE:LEFT") {
-    currentState = WALKING;
-    resetGait();
-
-    Serial.println("MOVE_ACK:LEFT");
+  if (cmd == "SEQUENCE:CHECK_HEIGHT") {
+    Serial.println("ACK:CHECK_HEIGHT");
+    setRobotState(DRILLING);
+    return;
   }
 
-  else if (cmd == "MOVE:RIGHT") {
-    currentState = WALKING;
-    resetGait();
-
-    Serial.println("MOVE_ACK:RIGHT");
-  }
-
-  else if (cmd == "MOVE:STOP") {
-    resetGait();
-
-    Serial.println("MOVE_ACK:STOP");
-  }
-
-  // ---------- DRILL COMMANDS ----------
-  else if (cmd == "DRILL:ON") {
-    // Later this will call:
-    // drillMotor.on();
-
+  if (cmd == "SEQUENCE:BEGIN_DRILLING") {
+    Serial.println("ACK:BEGIN_DRILLING");
+    setRobotState(DRILLING);
     Serial.println("DRILL_ACK:ON_REQUESTED");
+    return;
   }
 
-  else if (cmd == "DRILL:OFF") {
-    // Later this will call:
-    // drillMotor.off();
-
+  if (cmd == "SEQUENCE:DRILL_COMPLETE") {
+    Serial.println("ACK:DRILL_COMPLETE");
     Serial.println("DRILL_ACK:OFF_REQUESTED");
+    setRobotState(SEEDING);
+    return;
   }
 
-  // ---------- SEEDER COMMANDS ----------
-  else if (cmd == "SEEDER:ON") {
-    // Later this will call:
-    // seederMotor.rotateOneRevolution();
-
+  if (cmd == "SEQUENCE:DROP_SEED") {
+    Serial.println("ACK:DROP_SEED");
+    setRobotState(SEEDING);
     Serial.println("SEEDER_ACK:ON_REQUESTED");
+    return;
   }
 
-  else if (cmd == "SEEDER:OFF") {
-    // Later this will call:
-    // seederMotor.release();
+  if (cmd == "SEQUENCE:MOVE_SIDEWAYS") {
+    Serial.println("ACK:MOVE_SIDEWAYS");
+    setRobotState(SEEDING);
+    Serial.println("MOVE_ACK:SIDEWAYS_REQUESTED");
+    return;
+  }
 
+  if (cmd == "SEQUENCE:COVER_SEED") {
+    Serial.println("ACK:COVER_SEED");
+    setRobotState(COVERING);
+    Serial.println("COVERING_ACK:REQUESTED");
+    return;
+  }
+
+  if (cmd == "SEQUENCE:RETURN_HOME") {
+    Serial.println("ACK:RETURN_HOME");
+    setRobotState(RETURN_HOME);
+    Serial.println("RETURN_HOME_ACK:REQUESTED");
+    return;
+  }
+
+  if (cmd == "DRILL:ON") {
+    Serial.println("DRILL_ACK:ON_REQUESTED");
+    return;
+  }
+
+  if (cmd == "DRILL:OFF") {
+    Serial.println("DRILL_ACK:OFF_REQUESTED");
+    return;
+  }
+
+  if (cmd == "SEEDER:ON") {
+    Serial.println("SEEDER_ACK:ON_REQUESTED");
+    return;
+  }
+
+  if (cmd == "SEEDER:OFF") {
     Serial.println("SEEDER_ACK:OFF_REQUESTED");
+    return;
   }
 
-  // ---------- UNKNOWN COMMAND ----------
-  else {
-    Serial.print("UNKNOWN_COMMAND:");
-    Serial.println(cmd);
-  }
+  Serial.print("UNKNOWN_COMMAND:");
+  Serial.println(cmd);
 }

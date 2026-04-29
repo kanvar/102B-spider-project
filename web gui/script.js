@@ -49,23 +49,27 @@ async function sendCommand(command) {
   updateLastCommand(command);
   addLog(`TX → ${command}`);
 
+  const ESP32_COMMAND_URL = "http://192.168.4.1/command";
+
   try {
-    await fetch(ESP32_COMMAND_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ command }),
+    const url = `${ESP32_COMMAND_URL}?cmd=${encodeURIComponent(command)}`;
+
+    const response = await fetch(url, {
+      method: "GET",
+      cache: "no-store",
     });
 
-    addLog(`Sent to ESP32 → ${command}`);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    addLog(`WiFi sent successfully → ${command}`);
     updateStatus({ wifi: "CONNECTED" });
   } catch (error) {
     addLog(`WiFi send error: ${error.message}`);
     updateStatus({ wifi: "ERROR" });
   }
 }
-
 // ---------- STATE CONTROL ----------
 function setState(state) {
   if (abortActive && state !== "IDLE") {

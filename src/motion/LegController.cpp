@@ -22,7 +22,7 @@ void resetGait() {
 }
 
 // ========== serivce function --> IDLE ==========
-void serviceIdle() {
+void serviceLegIdle() {
   static unsigned long lastPrint = 0;
   if (millis() - lastPrint > IDLE_PRINT_MS) {
     Serial.println("State: IDLE - holding neutral pose");

@@ -1,4 +1,5 @@
 #include <Arduino.h>
+
 #include "StateMachine.h"
 #include "SerialCommand.h"
 #include "WiFiCommand.h"
@@ -62,7 +63,6 @@ void stateMachineLoop() {
   // Distance sensor is mainly used during DRILLING
   checkDistanceSensor();
 
-  // State services
   switch (currentState) {
     case IDLE:
       serviceIdle();
@@ -108,8 +108,7 @@ void setRobotState(State newState) {
   Serial.print("STATE_ACK:");
   Serial.println(stateToString(currentState));
 
-  // Reset one-time action flags when entering a new state
-  if (newState == IDLE) {
+  if (newState == IDLE || newState == ABORT) {
     drillStarted = false;
     seederStarted = false;
     coveringStarted = false;
@@ -131,13 +130,6 @@ void setRobotState(State newState) {
   if (newState == RETURN_HOME) {
     returningHome = false;
   }
-
-  if (newState == ABORT) {
-    drillStarted = false;
-    seederStarted = false;
-    coveringStarted = false;
-    returningHome = false;
-  }
 }
 
 // =====================================================
@@ -153,12 +145,6 @@ void checkSafetyMonitor() {
       setRobotState(ABORT);
     }
   }
-
-  // Later add other safety checks here:
-  // - jam detection
-  // - invalid ultrasonic values
-  // - unexpected position
-  // - lost communication
 }
 
 // =====================================================
@@ -211,11 +197,6 @@ void checkDistanceSensor() {
 // =====================================================
 
 void serviceIdle() {
-  // IDLE:
-  // - Robot waiting
-  // - Motors off
-  // - Servos at home/zero position if needed
-
   drillStarted = false;
   seederStarted = false;
   coveringStarted = false;
@@ -233,11 +214,7 @@ void serviceIdle() {
 }
 
 void serviceDrilling() {
-  // DRILLING:
-  // - Ultrasonic sensor checks height
-  // - Drill turns on only when height is correct
-  // - Drill complete is triggered by GUI command:
-  //   SEQUENCE:DRILL_COMPLETE
+  // Ultrasonic height check happens in checkDistanceSensor()
 
   if (millis() - lastStatusPrint > 1000) {
     lastStatusPrint = millis();
@@ -246,11 +223,6 @@ void serviceDrilling() {
 }
 
 void serviceSeeding() {
-  // SEEDING:
-  // - Drill should be off
-  // - Seeder stepper drops one seed
-  // - Robot may move sideways after seed drop
-
   if (!seederStarted) {
     seederStarted = true;
     drillStarted = false;
@@ -271,11 +243,6 @@ void serviceSeeding() {
 }
 
 void serviceCovering() {
-  // COVERING:
-  // - Middle/side leg covers seed
-  // - Can repeat covering motion
-  // - Eventually returns home
-
   if (!coveringStarted) {
     coveringStarted = true;
 
@@ -292,12 +259,6 @@ void serviceCovering() {
 }
 
 void serviceReturnHome() {
-  // RETURN_HOME:
-  // - Stop drill
-  // - Stop/release seeder
-  // - Return servos/legs to home position
-  // - Then return to IDLE when complete
-
   if (!returningHome) {
     returningHome = true;
 
@@ -320,11 +281,6 @@ void serviceReturnHome() {
 }
 
 void serviceAbort() {
-  // ABORT:
-  // - Stop everything immediately
-  // - Stay here until GUI sends STATE:IDLE
-  // - Fire sensor still keeps monitoring
-
   drillStarted = false;
   seederStarted = false;
   coveringStarted = false;
