@@ -42,4 +42,7 @@ constexpr unsigned long IDLE_PRINT_MS      = 1000;
 // Fire sensor pin
 constexpr int FIRE_SENSOR_PIN = 35;   // change if needed
 
+constexpr const char* WIFI_AP_SSID = "SpiderRobot_102B";
+constexpr const char* WIFI_AP_PASSWORD = "spider102B";
+
 #endif

@@ -3,7 +3,7 @@ let abortActive = false;
 
 // Later this can become your ESP32 WiFi endpoint.
 // Example: const ESP32_COMMAND_URL = "http://192.168.4.1/command";
-const ESP32_COMMAND_URL = "";
+const ESP32_COMMAND_URL = "http://192.168.4.1/command";
 
 // ---------- STARTUP ----------
 window.addEventListener("DOMContentLoaded", () => {
@@ -44,16 +44,10 @@ function setupButtons() {
 }
 
 // ---------- COMMAND SENDING ----------
+// ---------- COMMAND SENDING ----------
 async function sendCommand(command) {
   updateLastCommand(command);
   addLog(`TX → ${command}`);
-
-  // For now, this only logs commands.
-  // Later, connect this to ESP32 WiFi using HTTP or WebSocket.
-  if (!ESP32_COMMAND_URL) {
-    addLog("[SIM MODE] Command logged only. ESP32 WiFi not connected yet.");
-    return;
-  }
 
   try {
     await fetch(ESP32_COMMAND_URL, {
@@ -63,6 +57,9 @@ async function sendCommand(command) {
       },
       body: JSON.stringify({ command }),
     });
+
+    addLog(`Sent to ESP32 → ${command}`);
+    updateStatus({ wifi: "CONNECTED" });
   } catch (error) {
     addLog(`WiFi send error: ${error.message}`);
     updateStatus({ wifi: "ERROR" });
