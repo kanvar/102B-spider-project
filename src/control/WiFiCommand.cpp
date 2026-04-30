@@ -4,7 +4,10 @@
 
 #include "WiFiCommand.h"
 #include "SerialCommand.h"
+#include "StateMachine.h"
 #include "../Config.h"
+#include "../sensors/DistanceSensor.h"
+#include "../sensors/FireSensor.h"
 
 WebServer server(80);
 
@@ -45,15 +48,9 @@ void handleCommandRequest() {
 
   String command = "";
 
-  // Option 1: GET request
-  // Example: /command?cmd=SEQUENCE:BEGIN_DRILLING
   if (server.hasArg("cmd")) {
     command = server.arg("cmd");
-  }
-
-  // Option 2: POST JSON request
-  // Example: {"command":"SEQUENCE:BEGIN_DRILLING"}
-  else {
+  } else {
     String body = server.arg("plain");
     command = extractCommandFromJson(body);
   }
@@ -61,11 +58,8 @@ void handleCommandRequest() {
   command.trim();
 
   if (command.length() == 0) {
-    server.send(
-      400,
-      "application/json",
-      "{\"status\":\"error\",\"message\":\"No command found\"}"
-    );
+    server.send(400, "application/json",
+      "{\"status\":\"error\",\"message\":\"No command found\"}");
     return;
   }
 
@@ -74,11 +68,31 @@ void handleCommandRequest() {
 
   handleSerialCommand(command);
 
-  server.send(
-    200,
-    "application/json",
-    "{\"status\":\"ok\"}"
-  );
+  server.send(200, "application/json", "{\"status\":\"ok\"}");
+}
+
+// =================================================================
+// /status — polled by the GUI every 1.5 s
+// Returns a JSON snapshot of current robot state
+// =================================================================
+
+void handleStatusRequest() {
+  sendCorsHeaders();
+
+  float distance = getLastDistance();   // last reading cached in DistanceSensor
+  bool  fire     = isFireDetected();
+  bool  drill    = (currentState == DRILLING);
+  bool  seeder   = (currentState == SEEDING);
+
+  String json = "{";
+  json += "\"state\":\"";   json += stateToString(currentState); json += "\",";
+  json += "\"distance\":";  json += String(distance, 1);         json += ",";
+  json += "\"fire\":";      json += fire   ? "true" : "false";   json += ",";
+  json += "\"drill\":";     json += drill  ? "true" : "false";   json += ",";
+  json += "\"seeder\":";    json += seeder ? "true" : "false";
+  json += "}";
+
+  server.send(200, "application/json", json);
 }
 
 void wifiCommandSetup() {
@@ -94,13 +108,14 @@ void wifiCommandSetup() {
   Serial.print("Receiver ESP32 IP Address: ");
   Serial.println(WiFi.softAPIP());
 
-server.on("/", HTTP_GET, handleRoot);
+  server.on("/",               HTTP_GET,     handleRoot);
+  server.on("/command",        HTTP_GET,     handleCommandRequest);
+  server.on("/command",        HTTP_POST,    handleCommandRequest);
+  server.on("/command",        HTTP_OPTIONS, handleOptions);
+  server.on("/status",         HTTP_GET,     handleStatusRequest);   // ← new
+  server.on("/status",         HTTP_OPTIONS, handleOptions);         // ← CORS preflight
 
-server.on("/command", HTTP_GET, handleCommandRequest);
-server.on("/command", HTTP_POST, handleCommandRequest);
-server.on("/command", HTTP_OPTIONS, handleOptions);
-
-server.begin();
+  server.begin();
 
   Serial.println("Receiver command server started.");
 }

@@ -1,17 +1,11 @@
 #pragma once
 
-void distanceSensorSetup();
-
+void  distanceSensorSetup();
 float readDistanceIfReady();
-
-bool isCloseEnoughToDrill(float distanceCm);
-
-bool tareDistance();
-
 float readRelativeDistanceIfReady();
-
-bool isDistanceTared();
-
-float getBaselineDistance();
-
-void resetTare();
+bool  isCloseEnoughToDrill(float distanceCm);
+bool  tareDistance();           // returns true on success, false on timeout
+float getLastDistance();        // returns last cached reading
+float getBaselineDistance();    // returns tare baseline, -1 if not tared
+bool  isDistanceTared();
+void  resetTare();
