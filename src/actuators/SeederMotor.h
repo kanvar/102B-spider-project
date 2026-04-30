@@ -6,7 +6,7 @@ public:
   SeederMotor();
 
   void begin();
-  void rotateOneRevolution();
+  void rotateSteps(int steps);
   void release();
 
 private:

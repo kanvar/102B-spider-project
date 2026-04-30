@@ -1,327 +1,348 @@
 #include <Arduino.h>
-
 #include "StateMachine.h"
 #include "SerialCommand.h"
-#include "WiFiCommand.h"
-
 #include "../motion/LegController.h"
 #include "../sensors/DistanceSensor.h"
-#include "../sensors/FireSensor.h"
+#include "../actuators/DrillMotor.h"
+#include "../actuators/SeederMotor.h"
 #include "../Config.h"
+#include "WiFiCommand.h"
 
-// Later, when connected:
-// #include "../actuators/DrillMotor.h"
-// #include "../actuators/SeederMotor.h"
+
+extern SeederMotor seeder;
+extern DrillMotor drill;
 
 State currentState = IDLE;
 
-static bool drillStarted = false;
-static bool seederStarted = false;
-static bool coveringStarted = false;
-static bool returningHome = false;
+// =================================================================
+// Drilling configuration
+// =================================================================
 
-static unsigned long lastStatusPrint = 0;
+#define DRILL_TRIGGER_CM       3.0
+#define COXA_START_ANGLE       90
+#define COXA_MIN_ANGLE         45
 
-// =====================================================
-// SETUP
-// =====================================================
+#define DESCENT_FAR_DISTANCE   20.0
+#define DESCENT_NEAR_DISTANCE  5.0
+#define DESCENT_FAST_MS        30
+#define DESCENT_SLOW_MS        200
 
-void stateMachineSetup() {
-  legSetup();
-  distanceSensorSetup();
-  fireSensorSetup();
+#define DRILLING_PHASE_DESCEND  0
+#define DRILLING_PHASE_LIFT     1
 
-  wifiCommandSetup();
+#define BASELINE_TOLERANCE_CM   0.5
 
-  currentState = IDLE;
+// =================================================================
+// Helper: state to string
+// =================================================================
 
-  drillStarted = false;
-  seederStarted = false;
-  coveringStarted = false;
-  returningHome = false;
-
-  Serial.println("SYSTEM_READY");
-  Serial.println("STATE_ACK:IDLE");
-  Serial.println("State machine initialized. State: IDLE");
-  Serial.println("Safety monitor initialized.");
+const char* stateToString(State s) {
+  switch (s) {
+    case IDLE:     return "IDLE";
+    case DRILLING: return "DRILLING";
+    case SEEDING:  return "SEEDING";
+    case COVERING: return "COVERING";
+    case ABORT:    return "ABORT";
+    default:       return "UNKNOWN";
+  }
 }
 
-// =====================================================
-// MAIN LOOP
-// =====================================================
+// =================================================================
+// Helper: compute step delay based on current ultrasonic distance
+// =================================================================
+
+unsigned long computeStepDelay(float distance) {
+  if (distance < 0) {
+    return DESCENT_SLOW_MS;
+  } else if (distance >= DESCENT_FAR_DISTANCE) {
+    return DESCENT_FAST_MS;
+  } else if (distance <= DESCENT_NEAR_DISTANCE) {
+    return DESCENT_SLOW_MS;
+  } else {
+    float t = (distance - DESCENT_NEAR_DISTANCE) / 
+              (DESCENT_FAR_DISTANCE - DESCENT_NEAR_DISTANCE);
+    return DESCENT_SLOW_MS + 
+           (unsigned long)((DESCENT_FAST_MS - DESCENT_SLOW_MS) * t);
+  }
+}
+
+// =================================================================
+// Helper: smooth servo movement
+// =================================================================
+
+void smoothMoveServoAngle(uint8_t bus, uint8_t ch, int startAngle, int endAngle, int stepDelayMs) {
+  if (startAngle < endAngle) {
+    for (int angle = startAngle; angle <= endAngle; angle++) {
+      writeServoAngle(bus, ch, angle);
+      delay(stepDelayMs);
+    }
+  } 
+  else {
+    for (int angle = startAngle; angle >= endAngle; angle--) {
+      writeServoAngle(bus, ch, angle);
+      delay(stepDelayMs);
+    }
+  }
+}
+
+// =================================================================
+// Setup
+// =================================================================
+
+void stateMachineSetup() {
+  Serial.println("StateMachine: setup");
+  
+  currentState = IDLE;
+  
+  Serial.print("StateMachine: starting in ");
+  Serial.println(stateToString(currentState));
+}
+
+// =================================================================
+// IDLE state
+// =================================================================
+
+void serviceIdle() {
+  static bool firstEntry = true;
+  
+  if (firstEntry) {
+    Serial.println("IDLE: first entry — zeroing servos and taring ultrasonic");
+    
+    zeroAllServos();
+    delay(2000);
+    tareDistance();
+    
+    firstEntry = false;
+    
+    Serial.println("IDLE: setup complete, monitoring for trigger");
+  }
+  
+  readDistanceIfReady();
+  
+  if (currentState != IDLE) {
+    firstEntry = true;
+  }
+}
+
+// =================================================================
+// DRILLING state — descend, then lift, drill on the whole time
+// =================================================================
+
+void serviceDrilling() {
+  static bool firstEntry = true;
+  static int currentCoxaAngle = COXA_START_ANGLE;
+  static unsigned long lastStepTime = 0;
+  static int phase = DRILLING_PHASE_DESCEND;
+  
+  if (firstEntry) {
+    Serial.println("DRILLING: first entry — drill on, beginning descent");
+    
+    drill.on();
+    
+    currentCoxaAngle = COXA_START_ANGLE;
+    setAllCoxas(currentCoxaAngle);
+    
+    phase = DRILLING_PHASE_DESCEND;
+    lastStepTime = millis();
+    firstEntry = false;
+  }
+  
+  float distance = readDistanceIfReady();
+  
+  // ---------- DESCEND PHASE ----------
+  if (phase == DRILLING_PHASE_DESCEND) {
+    
+    bool atGround = (distance > 0 && distance <= DRILL_TRIGGER_CM);
+    bool atMinAngle = (currentCoxaAngle <= COXA_MIN_ANGLE);
+    
+    if (atGround || atMinAngle) {
+      Serial.println("DRILLING: descent complete, beginning lift");
+      phase = DRILLING_PHASE_LIFT;
+      lastStepTime = millis();
+    }
+    else {
+      unsigned long stepDelay = computeStepDelay(distance);
+      
+      if (millis() - lastStepTime >= stepDelay) {
+        lastStepTime = millis();
+        currentCoxaAngle--;
+        setAllCoxas(currentCoxaAngle);
+        
+        Serial.print("DRILLING [DESCEND]: coxa=");
+        Serial.print(currentCoxaAngle);
+        Serial.print(" distance=");
+        Serial.print(distance);
+        Serial.print(" step_delay=");
+        Serial.println(stepDelay);
+      }
+    }
+  }
+  
+  // ---------- LIFT PHASE ----------
+  else if (phase == DRILLING_PHASE_LIFT) {
+    
+    // Hard stop: never lift past 90°
+    if (currentCoxaAngle >= COXA_START_ANGLE) {
+      Serial.println("DRILLING: lift complete (reached 90°) — drill off, advancing to SEEDING");
+      drill.off();
+      firstEntry = true;
+      currentState = SEEDING;
+      Serial.println("STATE_ACK:SEEDING");
+      return;
+    }
+    
+    // Soft trigger: ultrasonic confirmed baseline
+    float relative = readRelativeDistanceIfReady();
+    if (relative > -9000.0 && abs(relative) <= BASELINE_TOLERANCE_CM) {
+      Serial.print("DRILLING: returned to baseline (rel=");
+      Serial.print(relative);
+      Serial.println(") — drill off, advancing to SEEDING");
+      drill.off();
+      firstEntry = true;
+      currentState = SEEDING;
+      Serial.println("STATE_ACK:SEEDING");
+      return;
+    }
+    
+    unsigned long stepDelay = computeStepDelay(distance);
+    
+    if (millis() - lastStepTime >= stepDelay) {
+      lastStepTime = millis();
+      currentCoxaAngle++;
+      setAllCoxas(currentCoxaAngle);
+      
+      Serial.print("DRILLING [LIFT]: coxa=");
+      Serial.print(currentCoxaAngle);
+      Serial.print(" distance=");
+      Serial.print(distance);
+      Serial.print(" step_delay=");
+      Serial.println(stepDelay);
+    }
+  }
+  
+  if (currentState != DRILLING) {
+    firstEntry = true;
+  }
+}
+
+// =================================================================
+// SEEDING state — run seeder, then advance to COVERING
+// =================================================================
+
+void serviceSeeding() {
+  static bool firstEntry = true;
+  
+  if (firstEntry) {
+    Serial.println("SEEDING: first entry — running seeder");
+    
+    seeder.rotateSteps(2500);
+    
+    Serial.println("SEEDING: seeder done — advancing to COVERING");
+    
+    firstEntry = false;
+    currentState = COVERING;
+    Serial.println("STATE_ACK:COVERING");
+  }
+  
+  if (currentState != SEEDING) {
+    firstEntry = true;
+  }
+}
+
+// =================================================================
+// COVERING state — right middle femur sweeps 0° → 90° → 0°, twice
+// =================================================================
+
+// =================================================================
+// COVERING state — right-middle leg sweeps to cover the seed
+// =================================================================
+//
+// Path (repeated 2 times):
+//   Step 1: C 90 → 60   (F holds at 0)
+//   Step 2: C 60 → 140 + F 0 → 90    (synchronized, 90 steps)
+//   Step 3: C 140 → 90 + F 90 → 0    (synchronized, 90 steps, returns to start)
+//
+// After 2 reps: holds at C=90, F=0, then transitions to IDLE.
+
+void serviceCovering() {
+  static bool firstEntry = true;
+  
+  const int STEP_DELAY_MS = 20;
+  const int HOLD_MS = 700;
+  const int NUM_REPS = 2;
+  
+  if (firstEntry) {
+    Serial.println("COVERING: first entry — moving to start position");
+    
+    // Move servos to starting position before sweeping
+    writeServoAngle(rightMiddle_C.bus, rightMiddle_C.ch, 90);
+    writeServoAngle(rightMiddle_F.bus, rightMiddle_F.ch, 0);
+    delay(HOLD_MS);
+    
+    for (int rep = 0; rep < NUM_REPS; rep++) {
+      Serial.print("COVERING: rep ");
+      Serial.println(rep + 1);
+      
+      // Step 1: C 90 → 60, F holds at 0
+      Serial.println("COVERING: step 1 — C 90 → 60");
+      moveRightMiddleCOnly(90, 60, 0, STEP_DELAY_MS);
+      delay(HOLD_MS);
+      
+      // Step 2: C 60 → 140, F 0 → 90 (synchronized over 90 steps)
+      Serial.println("COVERING: step 2 — C 60 → 140, F 0 → 90");
+      moveRightMiddleCAndF(60, 140, 0, 90, 90, STEP_DELAY_MS);
+      delay(HOLD_MS);
+      
+      // Step 3: C 140 → 90, F 90 → 0 (synchronized return)
+      Serial.println("COVERING: step 3 — C 140 → 90, F 90 → 0");
+      moveRightMiddleCAndF(140, 90, 90, 0, 90, STEP_DELAY_MS);
+      delay(HOLD_MS);
+    }
+    
+    Serial.println("COVERING: complete — holding at start, returning to IDLE");
+    
+    // Final hold at start position
+    writeServoAngle(rightMiddle_C.bus, rightMiddle_C.ch, 90);
+    writeServoAngle(rightMiddle_F.bus, rightMiddle_F.ch, 0);
+    
+    firstEntry = false;
+    currentState = IDLE;
+    Serial.println("STATE_ACK:IDLE");
+  }
+  
+  if (currentState != COVERING) {
+    firstEntry = true;
+  }
+}
+
+// =================================================================
+// Main loop
+// =================================================================
 
 void stateMachineLoop() {
-  // USB serial command listener
   checkSerialCommand();
-
-  // WiFi command listener
-  wifiCommandLoop();
-
-  // Safety monitor must always run, even during ABORT
-  checkSafetyMonitor();
-
-  // Distance sensor is mainly used during DRILLING
-  checkDistanceSensor();
-
+  
+  static unsigned long lastPrint = 0;
+  if (millis() - lastPrint >= 2000) {
+    lastPrint = millis();
+    Serial.print("CURRENT_STATE:");
+    Serial.println(stateToString(currentState));
+  }
+  
   switch (currentState) {
     case IDLE:
       serviceIdle();
       break;
-
     case DRILLING:
       serviceDrilling();
       break;
-
     case SEEDING:
       serviceSeeding();
       break;
-
     case COVERING:
       serviceCovering();
       break;
-
-    case RETURN_HOME:
-      serviceReturnHome();
-      break;
-
     case ABORT:
-      serviceAbort();
       break;
-  }
-}
-
-// =====================================================
-// STATE CHANGE HELPER
-// =====================================================
-
-void setRobotState(State newState) {
-  if (currentState == newState) return;
-
-  State previousState = currentState;
-  currentState = newState;
-
-  Serial.print("STATE_CHANGE:");
-  Serial.print(stateToString(previousState));
-  Serial.print("->");
-  Serial.println(stateToString(currentState));
-
-  Serial.print("STATE_ACK:");
-  Serial.println(stateToString(currentState));
-
-  if (newState == IDLE || newState == ABORT) {
-    drillStarted = false;
-    seederStarted = false;
-    coveringStarted = false;
-    returningHome = false;
-  }
-
-  if (newState == DRILLING) {
-    drillStarted = false;
-  }
-
-  if (newState == SEEDING) {
-    seederStarted = false;
-  }
-
-  if (newState == COVERING) {
-    coveringStarted = false;
-  }
-
-  if (newState == RETURN_HOME) {
-    returningHome = false;
-  }
-}
-
-// =====================================================
-// ALWAYS-ON SAFETY MONITOR
-// =====================================================
-
-void checkSafetyMonitor() {
-  checkFireSensor();
-
-  if (isFireDetected()) {
-    if (currentState != ABORT) {
-      Serial.println("ALERT:FIRE_DETECTED");
-      setRobotState(ABORT);
-    }
-  }
-}
-
-// =====================================================
-// DISTANCE SENSOR CHECK
-// =====================================================
-
-void checkDistanceSensor() {
-  float distance = readDistanceIfReady();
-
-  if (distance < 0) return;
-
-  Serial.print("DISTANCE:");
-  Serial.println(distance);
-
-  // Distance only controls drill permission during DRILLING
-  if (currentState != DRILLING) return;
-
-  if (isCloseEnoughToDrill(distance)) {
-    if (!drillStarted) {
-      drillStarted = true;
-
-      Serial.print("EVENT: Correct drilling height reached: ");
-      Serial.print(distance);
-      Serial.println(" cm");
-
-      // Later add:
-      // drillMotor.on();
-
-      Serial.println("DRILL_ACK:ON_REQUESTED");
-    }
-  } 
-  else {
-    if (drillStarted) {
-      drillStarted = false;
-
-      // Later add:
-      // drillMotor.off();
-
-      Serial.println("DRILL_ACK:OFF_REQUESTED");
-    }
-
-    Serial.print("EVENT: Not close enough to drill: ");
-    Serial.print(distance);
-    Serial.println(" cm");
-  }
-}
-
-// =====================================================
-// STATE SERVICES
-// =====================================================
-
-void serviceIdle() {
-  drillStarted = false;
-  seederStarted = false;
-  coveringStarted = false;
-  returningHome = false;
-
-  // Later add:
-  // drillMotor.off();
-  // seederMotor.release();
-  // resetGait();
-
-  if (millis() - lastStatusPrint > 1000) {
-    lastStatusPrint = millis();
-    Serial.println("STATUS:IDLE");
-  }
-}
-
-void serviceDrilling() {
-  // Ultrasonic height check happens in checkDistanceSensor()
-
-  if (millis() - lastStatusPrint > 1000) {
-    lastStatusPrint = millis();
-    Serial.println("STATUS:DRILLING");
-  }
-}
-
-void serviceSeeding() {
-  if (!seederStarted) {
-    seederStarted = true;
-    drillStarted = false;
-
-    // Later add:
-    // drillMotor.off();
-    // seederMotor.rotateOneRevolution();
-
-    Serial.println("DRILL_ACK:OFF_REQUESTED");
-    Serial.println("SEEDER_ACK:ON_REQUESTED");
-    Serial.println("SEEDER_DONE");
-  }
-
-  if (millis() - lastStatusPrint > 1000) {
-    lastStatusPrint = millis();
-    Serial.println("STATUS:SEEDING");
-  }
-}
-
-void serviceCovering() {
-  if (!coveringStarted) {
-    coveringStarted = true;
-
-    // Later add:
-    // coverSeedWithMiddleLeg();
-
-    Serial.println("COVERING_ACK:STARTED");
-  }
-
-  if (millis() - lastStatusPrint > 1000) {
-    lastStatusPrint = millis();
-    Serial.println("STATUS:COVERING");
-  }
-}
-
-void serviceReturnHome() {
-  if (!returningHome) {
-    returningHome = true;
-
-    drillStarted = false;
-    seederStarted = false;
-    coveringStarted = false;
-
-    // Later add:
-    // drillMotor.off();
-    // seederMotor.release();
-    // returnLegsHome();
-
-    Serial.println("RETURN_HOME_ACK:STARTED");
-  }
-
-  if (millis() - lastStatusPrint > 1000) {
-    lastStatusPrint = millis();
-    Serial.println("STATUS:RETURN_HOME");
-  }
-}
-
-void serviceAbort() {
-  drillStarted = false;
-  seederStarted = false;
-  coveringStarted = false;
-  returningHome = false;
-
-  // Later add:
-  // drillMotor.off();
-  // seederMotor.release();
-  // resetGait();
-
-  if (millis() - lastStatusPrint > 1000) {
-    lastStatusPrint = millis();
-    Serial.println("STATUS:ABORT");
-  }
-}
-
-// =====================================================
-// STATE NAME HELPER
-// =====================================================
-
-const char* stateToString(State state) {
-  switch (state) {
-    case IDLE:
-      return "IDLE";
-
-    case DRILLING:
-      return "DRILLING";
-
-    case SEEDING:
-      return "SEEDING";
-
-    case COVERING:
-      return "COVERING";
-
-    case RETURN_HOME:
-      return "RETURN_HOME";
-
-    case ABORT:
-      return "ABORT";
-
-    default:
-      return "UNKNOWN";
   }
 }

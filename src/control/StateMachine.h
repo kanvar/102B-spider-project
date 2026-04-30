@@ -5,7 +5,6 @@ enum State {
   DRILLING,
   SEEDING,
   COVERING,
-  RETURN_HOME,
   ABORT
 };
 
@@ -14,15 +13,9 @@ extern State currentState;
 void stateMachineSetup();
 void stateMachineLoop();
 
-void setRobotState(State newState);
-const char* stateToString(State state);
-
 void serviceIdle();
 void serviceDrilling();
 void serviceSeeding();
-void serviceCovering();
-void serviceReturnHome();
-void serviceAbort();
+void serviceCovering();           // ← NEW
 
-void checkSafetyMonitor();
-void checkDistanceSensor();
+const char* stateToString(State s);
