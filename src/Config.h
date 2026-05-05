@@ -10,7 +10,7 @@ struct ServoAddr { uint8_t bus; uint8_t ch; };
 
 constexpr ServoAddr leftFront_H = { 0x40, 2 };
 constexpr ServoAddr leftFront_C = { 0x40, 3 };
-constexpr ServoAddr leftFront_F = { 0x40, 1 };
+constexpr ServoAddr leftFront_F = { 0x40, 0 };
 
 constexpr ServoAddr leftMiddle_H = { 0x60, 7 };
 constexpr ServoAddr leftMiddle_C = { 0x60, 5 };
@@ -22,13 +22,13 @@ constexpr ServoAddr leftBack_F = { 0x40, 6 };
 
 //Right Legs
 
-constexpr ServoAddr rightfront_H = { 0x60, 12 };
-constexpr ServoAddr rightFront_C = { 0x60, 13 };
-constexpr ServoAddr rightFront_F = { 0x60, 14 };
+constexpr ServoAddr rightfront_H = { 0x60, 13 };
+constexpr ServoAddr rightFront_C = { 0x60, 14 };
+constexpr ServoAddr rightFront_F = { 0x60, 15 };
 
-constexpr ServoAddr rightMiddle_H = { 0x60, 9 };
-constexpr ServoAddr rightMiddle_C = { 0x60, 10 };
-constexpr ServoAddr rightMiddle_F = { 0x60, 8 };
+constexpr ServoAddr rightMiddle_H = { 0x60, 10 };
+constexpr ServoAddr rightMiddle_C = { 0x60, 11 };
+constexpr ServoAddr rightMiddle_F = { 0x60, 9 };
 
 constexpr ServoAddr rightBack_H = { 0x40, 12 };
 constexpr ServoAddr rightBack_C = { 0x40, 14 };

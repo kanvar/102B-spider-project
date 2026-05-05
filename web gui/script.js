@@ -4,29 +4,34 @@
 // CONFIG
 // =============================================================
 
-const ESP32_IP          = () => document.getElementById('esp32-ip')?.value?.trim() || '192.168.4.1';
-const COMMAND_URL       = () => `http://${ESP32_IP()}/command`;
-const STATUS_URL        = () => `http://${ESP32_IP()}/status`;
-const POLL_INTERVAL_MS  = 1500;   // how often we poll /status
+const ESP32_IP         = () => document.getElementById('esp32-ip')?.value?.trim() || '192.168.4.1';
+const COMMAND_URL      = () => `http://${ESP32_IP()}/command`;
+const STATUS_URL       = () => `http://${ESP32_IP()}/status`;
+const POLL_INTERVAL_MS = 1500;
+
+// How long to wait before logging a "still blocking" message
+// SEEDING and COVERING block the ESP32 for several seconds
+const BLOCKING_WARN_MS = 8000;
 
 // =============================================================
 // STATE
 // =============================================================
 
-let currentState  = 'IDLE';
-let abortActive   = false;
-let pollTimer     = null;
-let isConnected   = false;
-let lastPollTime  = 0;
+let currentState      = 'IDLE';
+let abortActive       = false;
+let pollTimer         = null;
+let isConnected       = false;
+let blockingStartTime = null;   // tracks when a blocking state began
 
-// State descriptions matching the actual StateMachine.cpp behavior
 const STATE_DESCRIPTIONS = {
-  IDLE:     'Servos zeroed · Ultrasonic tared · Waiting for trigger',
-  DRILLING: 'Drill on · Descending legs · Auto-lifting when at ground',
-  SEEDING:  'Seeder motor running · Dropping seed into hole',
-  COVERING: 'Right-middle leg sweeping · Covering hole (2 reps)',
-  ABORT:    'Emergency stop · All actuators disabled · Awaiting reset',
+  IDLE:     'Servos zeroed · Ultrasonic tared · Waiting for STATE:DRILLING',
+  DRILLING: 'Drill ON · Coxa descending 90°→45° · Auto-lifting to baseline',
+  SEEDING:  'Drill OFF · Stepper rotating 2500 steps · [ESP32 blocking — brief disconnect normal]',
+  COVERING: 'Right-middle leg sweeping C+F · 2 reps · [ESP32 blocking — brief disconnect normal]',
+  ABORT:    'All actuators disabled · Send STATE:IDLE to reset',
 };
+
+const VALID_STATES = ['IDLE', 'DRILLING', 'SEEDING', 'COVERING', 'ABORT'];
 
 // =============================================================
 // INIT
@@ -36,8 +41,9 @@ window.addEventListener('DOMContentLoaded', () => {
   setupButtons();
   setupIpField();
   renderState('IDLE');
-  addLog('sys', 'GUI loaded — connect to SpiderRobot_102B Wi-Fi then click Start Sequence');
-  addLog('sys', 'Polling /status every 1.5 s once connected');
+  addLog('sys', 'GUI loaded — connect to SpiderRobot_102B (pw: spider102B)');
+  addLog('sys', 'Click START PLANTING SEQUENCE or any state button to begin.');
+  addLog('sys', 'Brief disconnect during SEEDING / COVERING is normal — ESP32 will reconnect automatically.');
   startPolling();
 });
 
@@ -46,7 +52,6 @@ window.addEventListener('DOMContentLoaded', () => {
 // =============================================================
 
 function setupIpField() {
-  // If there's no IP field in the HTML, nothing breaks — we just use the default
   const field = document.getElementById('esp32-ip');
   if (!field) return;
   field.value = '192.168.4.1';
@@ -60,18 +65,28 @@ function setupIpField() {
 // =============================================================
 
 function setupButtons() {
-  // Abort button in header
+  // Header abort button
   const abortBtn = document.getElementById('abortBtn');
   if (abortBtn) abortBtn.addEventListener('click', triggerAbort);
 
-  // State buttons (left column)
+  // State buttons — each sends STATE:X directly to ESP32
   document.querySelectorAll('[data-state]').forEach(btn => {
     btn.addEventListener('click', () => {
-      if (abortActive && btn.dataset.state !== 'IDLE') {
-        addLog('warn', 'Clear ABORT first before changing state');
+      const state = btn.dataset.state;
+      if (!VALID_STATES.includes(state)) {
+        addLog('warn', `Unknown state: ${state}`);
         return;
       }
-      sendStateCommand(btn.dataset.state);
+      if (state === 'ABORT') {
+        triggerAbort();
+        return;
+      }
+      if (abortActive && state !== 'IDLE') {
+        addLog('warn', 'Clear ABORT first — use CLEAR & RETURN TO IDLE');
+        return;
+      }
+      // Send STATE:X directly — this is what SerialCommand.cpp handles
+      sendStateCommand(state);
     });
   });
 
@@ -86,13 +101,13 @@ function setupButtons() {
     });
   });
 
-  // Abort overlay clear button (wired via onclick in HTML, but also here for safety)
+  // Abort overlay clear button
   const clearBtn = document.querySelector('.overlay-clear-btn');
   if (clearBtn) clearBtn.addEventListener('click', clearAbort);
 }
 
 // =============================================================
-// POLLING /status
+// POLLING /status  (every 1.5 s)
 // =============================================================
 
 function startPolling() {
@@ -104,19 +119,20 @@ async function pollStatus() {
   try {
     const res = await fetch(STATUS_URL(), {
       method: 'GET',
-      cache: 'no-store',
+      cache:  'no-store',
       signal: AbortSignal.timeout(1200),
     });
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     const data = await res.json();
-    lastPollTime = Date.now();
 
+    // Reconnected after blocking state
     if (!isConnected) {
       isConnected = true;
+      blockingStartTime = null;
       setConnectionPill('CONNECTED');
-      addLog('rx', 'ESP32 connected');
+      addLog('rx', 'ESP32 reconnected');
     }
 
     handleStatusPayload(data);
@@ -125,57 +141,61 @@ async function pollStatus() {
     if (isConnected) {
       isConnected = false;
       setConnectionPill('OFFLINE');
-      addLog('err', `Lost connection: ${err.message}`);
+
+      // Only log alarming message if not in a known blocking state
+      if (currentState === 'SEEDING' || currentState === 'COVERING') {
+        if (!blockingStartTime) blockingStartTime = Date.now();
+        addLog('sys', `ESP32 executing ${currentState} — polling paused, will auto-reconnect`);
+      } else {
+        blockingStartTime = null;
+        addLog('err', `Connection lost: ${err.message}`);
+      }
+    } else if (blockingStartTime) {
+      // Already offline in blocking state — log a reminder if taking very long
+      const elapsed = Date.now() - blockingStartTime;
+      if (elapsed > BLOCKING_WARN_MS && elapsed < BLOCKING_WARN_MS + POLL_INTERVAL_MS) {
+        addLog('warn', `${currentState} still running (${Math.round(elapsed/1000)}s) — waiting for ESP32...`);
+      }
     }
+
     setText('wifiValue', 'OFFLINE');
   }
 }
 
-// Handle the JSON object from /status
-// Expected shape from WiFiCommand.cpp:
-// {
-//   "state": "IDLE",
-//   "distance": 12.4,
-//   "fire": false,
-//   "drill": false,
-//   "seeder": false
-// }
+// Expected /status JSON: { "state": "IDLE", "distance": 12.4, "drill": false, "seeder": false }
 function handleStatusPayload(data) {
-  // State sync — the ESP32 is authoritative
-  if (data.state && data.state !== currentState) {
-    addLog('rx', `STATE_ACK: ${data.state}`);
+  // ESP32 is authoritative — sync GUI state if it drifted
+  if (data.state && VALID_STATES.includes(data.state) && data.state !== currentState) {
+    addLog('rx', `State sync: ${currentState} → ${data.state}`);
     applyStateChange(data.state);
   }
 
   // Distance
   if (data.distance !== undefined && data.distance !== null) {
     const cm = parseFloat(data.distance);
-    if (!isNaN(cm)) {
+    if (!isNaN(cm) && cm > 0) {
       setText('distanceValue', `${cm.toFixed(1)} cm`);
+      const bar = document.getElementById('distBar');
+      if (bar) bar.style.width = `${Math.min(100, (cm / 30) * 100)}%`;
     }
   }
 
-  // Fire sensor
-  if (data.fire === true) {
-    handleFireAlert();
-  } else {
-    const fireEl = document.getElementById('fireValue');
-    if (fireEl) fireEl.innerHTML = '<span class="fire-safe">● SAFE</span>';
-  }
-
-  // Drill
+  // Drill motor
   if (data.drill !== undefined) {
     setText('drillValue', data.drill ? 'ON' : 'OFF');
+    const tcDrill = document.getElementById('tc-drill');
+    if (tcDrill) tcDrill.classList.toggle('active', data.drill);
   }
 
-  // Seeder
+  // Seeder motor
   if (data.seeder !== undefined) {
     setText('seederValue', data.seeder ? 'RUNNING' : 'IDLE');
+    const tcSeeder = document.getElementById('tc-seeder');
+    if (tcSeeder) tcSeeder.classList.toggle('active', data.seeder);
   }
 
   setText('wifiValue', 'CONNECTED');
 
-  // Update telem age
   const ageEl = document.getElementById('telem-age');
   if (ageEl) ageEl.textContent = `LIVE · ${new Date().toLocaleTimeString()}`;
 }
@@ -192,13 +212,14 @@ async function sendCommand(command) {
     const url = `${COMMAND_URL()}?cmd=${encodeURIComponent(command)}`;
     const res = await fetch(url, {
       method: 'GET',
-      cache: 'no-store',
+      cache:  'no-store',
       signal: AbortSignal.timeout(2000),
     });
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
     addLog('rx', `ACK ← ${command}`);
+
     if (!isConnected) {
       isConnected = true;
       setConnectionPill('CONNECTED');
@@ -213,17 +234,25 @@ async function sendCommand(command) {
 
 // =============================================================
 // STATE CONTROL
+// All state changes go through STATE:X — this is what
+// SerialCommand.cpp's setRobotState() responds to.
 // =============================================================
 
 function sendStateCommand(state) {
   sendCommand(`STATE:${state}`);
-  // Optimistic local update — /status poll will correct if ESP32 disagrees
-  applyStateChange(state);
+  applyStateChange(state);        // optimistic UI update
 }
 
 function applyStateChange(state) {
   currentState = state;
   renderState(state);
+
+  // Track blocking state start time for disconnect handling
+  if (state === 'SEEDING' || state === 'COVERING') {
+    blockingStartTime = Date.now();
+  } else {
+    blockingStartTime = null;
+  }
 
   if (state === 'ABORT') {
     abortActive = true;
@@ -232,26 +261,20 @@ function applyStateChange(state) {
 }
 
 function renderState(state) {
-  // Badge
   const badge = document.getElementById('currentState');
   if (badge) {
     badge.textContent = state;
     badge.className   = 'badge-value state-' + state.toLowerCase();
   }
 
-  // Description
   const desc = document.getElementById('badge-desc');
   if (desc) desc.textContent = STATE_DESCRIPTIONS[state] || '';
 
-  // Highlight active state button
   document.querySelectorAll('[data-state]').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.state === state);
   });
 
-  // Footer mode
   setText('modeFooter', state);
-
-  // Telemetry contextual updates
   applyTelemForState(state);
 }
 
@@ -267,16 +290,19 @@ function applyTelemForState(state) {
       setText('drillValue',  'ON');
       setText('seederValue', 'IDLE');
       setText('coverValue',  'WAITING');
+      setText('safetyValue', 'ACTIVE');
       break;
     case 'SEEDING':
       setText('drillValue',  'OFF');
       setText('seederValue', 'RUNNING');
       setText('coverValue',  'WAITING');
+      setText('safetyValue', 'ACTIVE');
       break;
     case 'COVERING':
       setText('drillValue',  'OFF');
       setText('seederValue', 'DONE');
       setText('coverValue',  'SWEEPING');
+      setText('safetyValue', 'ACTIVE');
       break;
     case 'ABORT':
       setText('drillValue',  'OFF');
@@ -289,52 +315,56 @@ function applyTelemForState(state) {
 
 // =============================================================
 // SEQUENCE BUTTONS
-// The sequence is mostly automatic on the ESP32 side now.
-// START_PLANTING_SEQUENCE is the main one — everything else
-// auto-advances: DRILLING → SEEDING → COVERING → IDLE
-// The manual steps are kept for override/debug use.
+// START_PLANTING_SEQUENCE sends STATE:DRILLING directly —
+// the ESP32 auto-advances DRILLING → SEEDING → COVERING → IDLE.
+// All other buttons are manual overrides that also use STATE:X.
 // =============================================================
 
 function runSequence(step) {
   if (abortActive) {
-    addLog('warn', 'Clear ABORT before running sequence');
+    addLog('warn', 'Clear ABORT before running sequence steps');
     return;
   }
 
-  // Optimistic UI hints for each step
   switch (step) {
     case 'START_PLANTING_SEQUENCE':
-      addLog('sys', 'Starting planting sequence — robot will auto-advance through states');
-      applyStateChange('DRILLING');
-      break;
+      addLog('sys', 'Starting sequence — robot will auto-advance DRILLING → SEEDING → COVERING → IDLE');
+      sendStateCommand('DRILLING');   // STATE:DRILLING triggers the full auto sequence
+      return;
+
     case 'CHECK_HEIGHT':
-      addLog('sys', 'Checking ultrasonic height');
-      break;
+      addLog('sys', 'Manual: checking ultrasonic height');
+      sendCommand('SEQUENCE:CHECK_HEIGHT');
+      return;
+
     case 'BEGIN_DRILLING':
-      addLog('sys', 'Requesting drill on');
-      setText('drillValue', 'ON');
-      break;
+      addLog('sys', 'Manual override: begin drilling');
+      sendStateCommand('DRILLING');
+      return;
+
     case 'DRILL_COMPLETE':
-      addLog('sys', 'Marking drill complete → SEEDING');
-      applyStateChange('SEEDING');
-      break;
+      addLog('sys', 'Manual override: advance to SEEDING');
+      sendStateCommand('SEEDING');
+      return;
+
     case 'DROP_SEED':
-      addLog('sys', 'Seeder running');
-      setText('seederValue', 'RUNNING');
-      break;
+      addLog('sys', 'Manual override: advance to SEEDING');
+      sendStateCommand('SEEDING');
+      return;
+
     case 'COVER_SEED':
-      addLog('sys', 'Covering seed → COVERING');
-      applyStateChange('COVERING');
-      break;
+      addLog('sys', 'Manual override: advance to COVERING');
+      sendStateCommand('COVERING');
+      return;
+
     case 'RETURN_HOME':
-      addLog('sys', 'Returning to IDLE');
-      applyStateChange('IDLE');
-      break;
+      addLog('sys', 'Manual override: return to IDLE');
+      sendStateCommand('IDLE');
+      return;
+
     default:
       addLog('warn', `Unknown sequence step: ${step}`);
   }
-
-  sendCommand(`SEQUENCE:${step}`);
 }
 
 // =============================================================
@@ -343,6 +373,7 @@ function runSequence(step) {
 
 function triggerAbort() {
   abortActive = true;
+  blockingStartTime = null;
   sendCommand('ABORT');
   applyStateChange('ABORT');
   addLog('err', 'ABORT triggered — all actuators stopping');
@@ -367,28 +398,12 @@ function hideAbortOverlay() {
 }
 
 // =============================================================
-// FIRE / SAFETY ALERTS
-// =============================================================
-
-function handleFireAlert() {
-  const fireEl = document.getElementById('fireValue');
-  if (fireEl) fireEl.innerHTML = '<span class="fire-alert">● ALERT</span>';
-  setText('safetyValue', 'FIRE DETECTED');
-
-  if (!abortActive) {
-    addLog('err', 'FIRE SENSOR ALERT — triggering abort');
-    triggerAbort();
-  }
-}
-
-// =============================================================
 // CONNECTION PILL
 // =============================================================
 
 function setConnectionPill(status) {
   const pill = document.getElementById('connectionStatus');
   if (!pill) return;
-
   pill.innerHTML = `<span class="pill-dot"></span><span>${status}</span>`;
   pill.classList.remove('pill-online', 'pill-offline');
   pill.classList.add(status === 'CONNECTED' ? 'pill-online' : 'pill-offline');
@@ -400,11 +415,11 @@ function setConnectionPill(status) {
 // =============================================================
 
 const LOG_COLORS = {
-  tx:   'log-tx',    // yellow — outgoing command
-  rx:   'log-rx',    // green  — incoming / ack
-  sys:  'log-sys',   // muted  — system info
-  warn: 'log-warn',  // orange — warnings
-  err:  'log-err',   // red    — errors / alerts
+  tx:   'log-tx',
+  rx:   'log-rx',
+  sys:  'log-sys',
+  warn: 'log-warn',
+  err:  'log-err',
 };
 
 function addLog(type, message) {
@@ -418,7 +433,6 @@ function addLog(type, message) {
 
   logBox.appendChild(line);
 
-  // Keep log from growing forever
   while (logBox.children.length > 200) {
     logBox.removeChild(logBox.firstChild);
   }
@@ -442,11 +456,9 @@ function setText(id, value) {
 }
 
 // =============================================================
-// KEYBOARD SHORTCUT — ESC = ABORT
+// KEYBOARD — ESC = ABORT
 // =============================================================
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') {
-    triggerAbort();
-  }
+  if (e.key === 'Escape') triggerAbort();
 });

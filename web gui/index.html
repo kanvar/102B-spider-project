@@ -42,7 +42,6 @@
     </div>
 
     <div class="header-center">
-      <!-- IP field so you can change the ESP32 address without editing JS -->
       <div class="ip-row">
         <span class="ip-label">ESP32 IP</span>
         <input id="esp32-ip" class="ip-input" type="text" value="192.168.4.1" spellcheck="false" />
@@ -91,7 +90,8 @@
           </div>
 
           <div class="sequence-list compact-sequence">
-            <!-- Primary trigger — everything else auto-advances -->
+
+            <!-- Primary trigger -->
             <button class="seq-btn seq-btn-primary full-width" data-sequence="START_PLANTING_SEQUENCE" type="button">
               ▶ &nbsp;START PLANTING SEQUENCE
             </button>
@@ -107,6 +107,7 @@
             <button class="seq-btn seq-btn-end full-width" data-sequence="RETURN_HOME" type="button">
               07 · Return to IDLE
             </button>
+
           </div>
         </section>
 
@@ -119,7 +120,9 @@
         <div class="card state-badge-card" id="badge-card">
           <div class="badge-label">CURRENT STATE</div>
           <div class="badge-value state-idle" id="currentState">IDLE</div>
-          <div class="badge-sub" id="badge-desc">Servos zeroed · Ultrasonic tared · Waiting for trigger</div>
+          <div class="badge-sub" id="badge-desc">
+            Servos zeroed · Ultrasonic tared · Waiting for STATE:DRILLING
+          </div>
         </div>
 
         <!-- LIVE TELEMETRY -->
@@ -131,34 +134,32 @@
 
           <div class="telem-grid">
 
-            <div class="telem-card" id="tc-distance">
+            <!-- Distance — full width top row -->
+            <div class="telem-card tc-wide" id="tc-distance">
               <div class="tc-title">ULTRASONIC HEIGHT</div>
               <div class="tc-value" id="distanceValue">-- cm</div>
               <div class="tc-bar-wrap"><div class="tc-bar" id="distBar"></div></div>
             </div>
 
+            <!-- Drill -->
             <div class="telem-card" id="tc-drill">
               <div class="tc-title">DRILL MOTOR</div>
               <div class="tc-value" id="drillValue">OFF</div>
             </div>
 
+            <!-- Seeder -->
             <div class="telem-card" id="tc-seeder">
               <div class="tc-title">SEEDER MOTOR</div>
               <div class="tc-value" id="seederValue">IDLE</div>
             </div>
 
+            <!-- Covering leg -->
             <div class="telem-card" id="tc-cover">
               <div class="tc-title">COVERING LEG</div>
               <div class="tc-value small" id="coverValue">READY</div>
             </div>
 
-            <div class="telem-card tc-wide" id="tc-fire">
-              <div class="tc-title">FIRE SENSOR</div>
-              <div class="tc-value" id="fireValue">
-                <span class="fire-safe">● SAFE</span>
-              </div>
-            </div>
-
+            <!-- Safety monitor — full width bottom row -->
             <div class="telem-card tc-wide">
               <div class="tc-title">SAFETY MONITOR</div>
               <div class="tc-value small" id="safetyValue">ACTIVE</div>
@@ -183,17 +184,17 @@
             <div class="map-item">
               <span class="map-title">WiFiCommand</span>
               <span class="map-arrow">→</span>
-              <span class="map-desc">Parses HTTP, calls handleSerialCommand()</span>
+              <span class="map-desc">Parses HTTP · calls handleSerialCommand()</span>
+            </div>
+            <div class="map-item">
+              <span class="map-title">SerialCommand</span>
+              <span class="map-arrow">→</span>
+              <span class="map-desc">Maps command strings → setRobotState()</span>
             </div>
             <div class="map-item">
               <span class="map-title">StateMachine</span>
               <span class="map-arrow">→</span>
               <span class="map-desc">IDLE → DRILLING → SEEDING → COVERING → IDLE</span>
-            </div>
-            <div class="map-item">
-              <span class="map-title">Safety Monitor</span>
-              <span class="map-arrow">→</span>
-              <span class="map-desc">Polls fire sensor every loop · any state → ABORT</span>
             </div>
           </div>
         </div>
