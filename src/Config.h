@@ -22,7 +22,7 @@ constexpr ServoAddr leftBack_F = { 0x40, 6 };
 
 //Right Legs
 
-constexpr ServoAddr rightfront_H = { 0x60, 13 };
+constexpr ServoAddr rightFront_H = { 0x60, 13 };
 constexpr ServoAddr rightFront_C = { 0x60, 14 };
 constexpr ServoAddr rightFront_F = { 0x60, 15 };
 
@@ -69,6 +69,6 @@ constexpr unsigned long GAIT_STEP_MS       = 600;
 constexpr unsigned long IDLE_PRINT_MS      = 1000;
 
 constexpr const char* WIFI_AP_SSID = "SpiderRobot_102B";
-constexpr const char* WIFI_AP_PASSWORD = "spider102B";
+constexpr const char* WIFI_AP_PASSWORD = "123456789";
 
 #endif

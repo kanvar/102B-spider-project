@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "control/StateMachine.h"
+#include "control/WiFiCommand.h"
 #include "actuators/DrillMotor.h"
 #include "actuators/SeederMotor.h"
 #include "motion/LegController.h"
@@ -16,9 +17,11 @@ void setup() {
   seeder.begin();
   legSetup();
   distanceSensorSetup();
+  wifiCommandSetup();
   stateMachineSetup();
 }
 
 void loop() {
+  wifiCommandLoop();
   stateMachineLoop();
 }
