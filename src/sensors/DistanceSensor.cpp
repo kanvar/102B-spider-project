@@ -6,7 +6,6 @@ static unsigned long lastRead    = 0;
 static unsigned long lastPrint   = 0;
 static float lastDistanceCm      = -1.0;
 
-// Tare state
 static float baselineDistance = -1.0;
 static bool  tared            = false;
 
@@ -76,7 +75,7 @@ bool tareDistance() {
   unsigned long startTime = millis();
 
   while (count < SAMPLES_NEEDED && (millis() - startTime) < TIMEOUT_MS) {
-    lastRead = 0;   // force a fresh read
+    lastRead = 0;
     float d = readDistanceIfReady();
 
     if (d > 0) {

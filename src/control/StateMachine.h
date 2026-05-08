@@ -16,6 +16,6 @@ void stateMachineLoop();
 void serviceIdle();
 void serviceDrilling();
 void serviceSeeding();
-void serviceCovering();           // ← NEW
+void serviceCovering();
 
 const char* stateToString(State s);

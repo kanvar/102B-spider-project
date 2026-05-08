@@ -17,7 +17,7 @@ void handleSerialCommand(String cmd) {
   Serial.print("RX:");
   Serial.println(cmd);
 
-  // ── ABORT ────────────────────────────────────────────────
+  // Abort state
   if (cmd == "ABORT" || cmd == "STATE:ABORT") {
     currentState = ABORT;
     Serial.println("STATE_ACK:ABORT");
@@ -25,7 +25,7 @@ void handleSerialCommand(String cmd) {
     return;
   }
 
-  // ── STATE COMMANDS ───────────────────────────────────────
+  // commands
   if (cmd == "STATE:IDLE") {
     currentState = IDLE;
     Serial.println("STATE_ACK:IDLE");
@@ -50,10 +50,6 @@ void handleSerialCommand(String cmd) {
     return;
   }
 
-  // ── SEQUENCE COMMANDS ────────────────────────────────────
-  // All sequence commands map to the appropriate state.
-  // The state machine auto-advances from there.
-
   if (cmd == "SEQUENCE:START_PLANTING_SEQUENCE") {
     Serial.println("ACK:START_PLANTING_SEQUENCE");
     currentState = DRILLING;
@@ -63,7 +59,6 @@ void handleSerialCommand(String cmd) {
 
   if (cmd == "SEQUENCE:CHECK_HEIGHT") {
     Serial.println("ACK:CHECK_HEIGHT");
-    // Stay in current state — just a sensor read trigger
     return;
   }
 

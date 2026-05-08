@@ -10,7 +10,7 @@ void move70mm();
 void seedingMoveForward();
 void sideStepRight();
 
-// Right-middle leg covering motion helpers
+
 void moveRightMiddleCOnly(int cStart, int cEnd, int fHold, int stepDelayMs);
 void moveRightMiddleCAndF(int cStart, int cEnd, int fStart, int fEnd, 
                           int totalSteps, int stepDelayMs);

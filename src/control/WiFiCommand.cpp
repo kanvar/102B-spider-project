@@ -71,11 +71,6 @@ void handleCommandRequest() {
   server.send(200, "application/json", "{\"status\":\"ok\"}");
 }
 
-// =================================================================
-// /status — polled by the GUI every 1.5 s
-// Returns a JSON snapshot of current robot state
-// =================================================================
-
 void handleStatusRequest() {
   sendCorsHeaders();
 

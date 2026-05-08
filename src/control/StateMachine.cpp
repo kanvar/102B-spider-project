@@ -13,9 +13,7 @@ extern DrillMotor drill;
 
 State currentState = IDLE;
 
-// =================================================================
-// Drilling configuration
-// =================================================================
+//drill configuration
 
 #define DRILL_TRIGGER_CM 3.0
 #define COXA_START_ANGLE 90
@@ -31,9 +29,7 @@ State currentState = IDLE;
 
 #define BASELINE_TOLERANCE_CM 0.5
 
-// =================================================================
-// Helper: state to string
-// =================================================================
+//helper function: state to string
 
 const char *stateToString(State s)
 {
@@ -54,9 +50,7 @@ const char *stateToString(State s)
   }
 }
 
-// =================================================================
-// Helper: compute step delay based on current ultrasonic distance
-// =================================================================
+//helper function: delay for drilling
 
 unsigned long computeStepDelay(float distance)
 {
@@ -81,9 +75,7 @@ unsigned long computeStepDelay(float distance)
   }
 }
 
-// =================================================================
-// Helper: smooth servo movement
-// =================================================================
+//helper function: slow the servos down
 
 void smoothMoveServoAngle(uint8_t bus, uint8_t ch, int startAngle, int endAngle, int stepDelayMs)
 {
@@ -105,9 +97,6 @@ void smoothMoveServoAngle(uint8_t bus, uint8_t ch, int startAngle, int endAngle,
   }
 }
 
-// =================================================================
-// Setup
-// =================================================================
 
 void stateMachineSetup()
 {
@@ -119,9 +108,7 @@ void stateMachineSetup()
   Serial.println(stateToString(currentState));
 }
 
-// =================================================================
-// IDLE state
-// =================================================================
+//IDLE state
 
 void serviceIdle()
 {
@@ -148,9 +135,7 @@ void serviceIdle()
   }
 }
 
-// =================================================================
-// DRILLING state — descend, then lift, drill on the whole time
-// =================================================================
+//drilling state
 
 void serviceDrilling()
 {
@@ -176,7 +161,7 @@ void serviceDrilling()
 
   float distance = readDistanceIfReady();
 
-  // ---------- DESCEND PHASE ----------
+  // lowering phase
   if (phase == DRILLING_PHASE_DESCEND)
   {
 
@@ -209,7 +194,7 @@ void serviceDrilling()
     }
   }
 
-  // ---------- LIFT PHASE ----------
+  // lift phase
   else if (phase == DRILLING_PHASE_LIFT)
   {
 
@@ -224,7 +209,6 @@ void serviceDrilling()
       return;
     }
 
-    // Soft trigger: ultrasonic confirmed baseline
     float relative = readRelativeDistanceIfReady();
     if (relative > -9000.0 && abs(relative) <= BASELINE_TOLERANCE_CM)
     {
@@ -262,9 +246,7 @@ void serviceDrilling()
   }
 }
 
-// =================================================================
-// SEEDING state — run seeder, then advance to COVERING
-// =================================================================
+// seeding state
 
 void serviceSeeding()
 {
@@ -293,6 +275,8 @@ void serviceSeeding()
   }
 }
 
+//covering state
+
 void serviceCovering()
 {
   static bool firstEntry = true;
@@ -307,7 +291,6 @@ void serviceCovering()
     sideStepRight();
     Serial.println("COVERING: first entry — moving to start position");
 
-    // Move servos to starting position before sweeping
     writeServoAngle(rightMiddle_C.bus, rightMiddle_C.ch, 90);
     writeServoAngle(rightMiddle_F.bus, rightMiddle_F.ch, 0);
     delay(HOLD_MS);
@@ -317,17 +300,14 @@ void serviceCovering()
       Serial.print("COVERING: rep ");
       Serial.println(rep + 1);
 
-      // Step 1: C 90 → 60, F holds at 0
       Serial.println("COVERING: step 1 — C 90 → 60");
       moveRightMiddleCOnly(90, 60, 0, STEP_DELAY_MS);
       delay(HOLD_MS);
 
-      // Step 2: C 60 → 140, F 0 → 90 (synchronized over 90 steps)
       Serial.println("COVERING: step 2 — C 60 → 140, F 0 → 90");
       moveRightMiddleCAndF(60, 140, 0, 90, 90, STEP_DELAY_MS);
       delay(HOLD_MS);
 
-      // Step 3: C 140 → 90, F 90 → 0 (synchronized return)
       Serial.println("COVERING: step 3 — C 140 → 90, F 90 → 0");
       moveRightMiddleCAndF(140, 90, 90, 0, 90, STEP_DELAY_MS);
       delay(HOLD_MS);
@@ -335,7 +315,6 @@ void serviceCovering()
 
     Serial.println("COVERING: complete — holding at start, returning to IDLE");
 
-    // Final hold at start position
     writeServoAngle(rightMiddle_C.bus, rightMiddle_C.ch, 90);
     writeServoAngle(rightMiddle_F.bus, rightMiddle_F.ch, 0);
 
@@ -350,9 +329,7 @@ void serviceCovering()
   }
 }
 
-// =================================================================
-// Main loop
-// =================================================================
+//state machine loop
 
 void stateMachineLoop()
 {
