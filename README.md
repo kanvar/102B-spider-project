@@ -1,52 +1,9 @@
-# 102B Spider Robot Control System
+# Spider Seeder Summary
 
-UC Berkeley ME 102B capstone: a spider-style robot for automated seed planting. A Python GUI talks to an ESP32 over serial; the ESP32 runs the state machine and drives the hardware.
+The Spider Seeder Robot was built for ME 102B, Spring 2026 — it's a six-legged robot that plants seeds in rough terrain. The idea is for ecological restoration work, where you need to get a lot of seeds into uneven ground and doing it by hand is slow while big machinery isn't precise enough and cannot navigate the rough terrain. There are five subsystems: the six-legged chassis, a 12V DC motor drill, a stepper-driven seed dispenser, the sensors, and an ESP32 handling control and communications.
 
-## Architecture
+The robot can walk, but we decided to have it plant from a fixed standing position instead of dealing with full gait planning. It runs an event-driven state machine: lower the body using the servos to push the drill into the soil, retract, drop the seeds, move over, then sweep a leg over to cover the hole. Skipping the walking let us put our effort into making the planting sequence flawless, which made sense for our assignment.
 
-```
-GUI (Python / PySide6)
-      ↓ Serial USB
-ESP32 (C++ / PlatformIO)
-      ↓
-Servos · DC Motor · Stepper · Sensors
-```
+On the electrical side, the ESP32 runs the state machine (IDLE → DRILLING → SEEDING → COVERING, with a global ABORT), handles WiFi, and drives all the I/O. Two PCA9685 boards run the 18 servos over I²C, a VNH5019 driver handles the 12 V drill motor, and a ULN2003 board runs the seed stepper. The part I'm most proud of ont his bot is the custom power distribution board I soldered in order to take power from the battery and distribute it to all components. There's also an IR flame sensor that triggers an immediate abort if it goes off. Due to our extreme electronics setup for a Mechanical Engineering course (extremly overkill) we were honored with reciving the award for the best Electromechanical Design award.
 
-## Folder Structure
-
-```
-gui/
-├── main.py
-├── requirements.txt
-└── assets/logo.png
-
-src/
-├── main.cpp
-├── Config.h
-├── control/      # SerialCommand, StateMachine
-├── motion/       # LegController
-├── sensors/      # DistanceSensor, FireSensor
-└── actuators/    # DrillMotor, SeederMotor
-```
-
-## Serial Protocol
-
-**GUI → ESP32**
-
-```
-STATE:IDLE | WALKING | PRE_PLANTING | PLANTING
-ABORT
-MOVE:FORWARD | STOP
-DRILL:ON | OFF
-SEEDER:ON | OFF
-```
-
-**ESP32 → GUI**
-
-```
-DISTANCE:<cm>
-DRILL_ACK:ON | OFF
-SEEDER_DONE
-STATE_ACK:<state>
-ALERT:ABORT_TRIGGERED
-```
+The biggest thing for future improvements: define the state machine, and define electronics before trying to mechanically integrate. We learned this the hard way — we selected most of our electronics after the main design and caused lots of sizing and late prototypying which was the reason we couldn't fully demo our walking sequence. 
